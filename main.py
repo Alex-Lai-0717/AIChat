@@ -49,6 +49,7 @@ CHAIN_TYPE_KWARGS = {"prompt": prompt}
 async def init():
     """初始化聊天室."""
     user_session.set("continuous_mode", True)
+    user_session.set("selected_model", "gpt-3.5-turbo-16k-0613")
     user_session.set(
         "message_history",
         [{"role": "system", "content": "連續對話，啟動！！！"}],
@@ -60,7 +61,7 @@ async def init():
             Select(
                 id="Model",
                 label="GPT - Model",
-                values=["gpt-3.5-turbo", "vicuna"],
+                values=["gpt-3.5-turbo-16k-0613", "vicuna"],
                 initial_index=0,
             ),
             Switch(id="continuous", label="預設為連續對話，關閉按鈕切換為單次對話", initial=True),
@@ -98,7 +99,7 @@ async def handle_message(message: str):
 async def upload_file():
     """允許用戶上傳文件並處理"""
     files = await cl.AskFileMessage(
-        content="開始上傳檔案!", accept={"text/plain": [".txt", ".py"]}, max_size_mb=100, max_files=10
+        content="開始上傳檔案!", accept={"text/plain": [".txt", ".py", ".csv"]}, max_size_mb=100, max_files=10
     ).send()
     file = files[0]
     msg = cl.Message(content=f"正在上傳 `{file.name}`......")
@@ -169,7 +170,7 @@ async def get_ai_response(model_name, message_history):
     else:
         msg = cl.Message(content="")
         async for stream_resp in await openai.ChatCompletion.acreate(
-                model="gpt-3.5-turbo", messages=message_history, stream=True, **OPENAI_SETTINGS
+                model=model_name, messages=message_history, stream=True, **OPENAI_SETTINGS
         ):
             token = stream_resp.choices[0]["delta"].get("content", "")
             await msg.stream_token(token)

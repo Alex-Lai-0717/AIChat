@@ -11,8 +11,8 @@ from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.chains import RetrievalQAWithSourcesChain
 from langchain.chat_models import ChatOpenAI
 
-url_to_vicuna = "http://10.30.9.17:8000/v1/chat/completions"
-settings = {
+URL_TO_VICUNA = "http://10.30.9.17:8000/v1/chat/completions"
+OPENAI_SETTINGS = {
     "temperature": 0.7,
     "max_tokens": 500,
     "top_p": 1,
@@ -20,13 +20,15 @@ settings = {
     "presence_penalty": 0,
 }
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-system_template = """使用以下的文本的上下文來回答用戶的問題。
+SYSTEM_TEMPLATE = """
+首先所有回答都"必須使用繁體中文"
+使用以下的文本的上下文來回答用戶的問題。
 如果你不知道答案，直接說你不知道，不要嘗試編造答案。
 所有回答都"必須"使用繁體中文
 你的答案中必須始終包含一個"來源"部分。
 "來源"部分應該是你得到答案的文檔的參考來源。
-
 你的回答應該像這樣：
+
 
 ```
 答案是 foo
@@ -34,19 +36,18 @@ system_template = """使用以下的文本的上下文來回答用戶的問題�
 ```
 
 開始!
-
 ----------------
-{summaries}"""
-messages = [
-    SystemMessagePromptTemplate.from_template(system_template),
-    HumanMessagePromptTemplate.from_template("{question}"),
-]
+{summaries}
+"""
+messages = [SystemMessagePromptTemplate.from_template(SYSTEM_TEMPLATE),
+            HumanMessagePromptTemplate.from_template("{question}"), ]
 prompt = ChatPromptTemplate.from_messages(messages)
-chain_type_kwargs = {"prompt": prompt}
+CHAIN_TYPE_KWARGS = {"prompt": prompt}
 
 
 @cl.on_chat_start
 async def init():
+    """初始化聊天室."""
     user_session.set("continuous_mode", True)
     user_session.set(
         "message_history",
@@ -69,22 +70,24 @@ async def init():
 
 @cl.on_settings_update
 async def setup_agent(settings):
-    value = settings["Model"]
-    continuous = settings["continuous"]
-    await cl.Message(content=f"當前model為{value},連續對話mode為{continuous}").send()
-    user_session.set("value", value)
-    user_session.set("continuous_mode", continuous)
+    """根據用戶設置設置 AI 代理。."""
+    selected_model = settings["Model"]
+    continuous_mode = settings["continuous"]
+    await cl.Message(content=f"當前model為{selected_model},連續對話mode為{continuous_mode}").send()
+    user_session.set("selected_model", selected_model)
+    user_session.set("continuous_mode", continuous_mode)
 
 
 @cl.on_message
-async def main(message: str):
+async def handle_message(message: str):
+    """處理用戶的訊息."""
     continuous_mode = user_session.get("continuous_mode")
     if message == "上傳檔案":
         await upload_file()
         return
-    elif "我想問" in message :
-        message = message.replace("我想問", "", 1)
-        await file_upload_main(message.strip())
+    elif "我想問" in message:
+        cleaned_message = message.replace("我想問", "用中文回答我", 1)
+        await handle_file_query(cleaned_message.strip())
         return
     elif continuous_mode:
         await continuous_chat(message)
@@ -93,6 +96,7 @@ async def main(message: str):
 
 
 async def upload_file():
+    """允許用戶上傳文件並處理"""
     files = await cl.AskFileMessage(
         content="開始上傳檔案!", accept={"text/plain": [".txt", ".py"]}, max_size_mb=100, max_files=10
     ).send()
@@ -115,52 +119,44 @@ async def upload_file():
     user_session.set("texts", texts)
     msg.content = f"`{file.name}` 已上傳成功. 請告訴我有哪些地方可以協助你!"
     await msg.update()
-
     user_session.set("chain", chain)
 
 
-async def file_upload_main(message):
-    message # do something
-
-    chain = cl.user_session.get("chain")
+async def handle_file_query(message):
+    """處理與上傳文件相關的查詢。."""
+    chain = user_session.get("chain")
     cb = cl.AsyncLangchainCallbackHandler(
         stream_final_answer=True, answer_prefix_tokens=["FINAL", "ANSWER"]
     )
-    cb.answer_reached = True
     res = await chain.acall(message, callbacks=[cb])
-
     answer = res["answer"]
     sources = res["sources"].strip()
     source_elements = []
-
-    metadatas = cl.user_session.get("metadatas")
+    metadatas = user_session.get("metadatas")
     all_sources = [m["source"] for m in metadatas]
-    texts = cl.user_session.get("texts")
-
+    texts = user_session.get("texts")
     if sources:
-        found_sources = []
-        for source in sources.split(","):
-            source_name = source.strip().replace(".", "")
-            try:
-                index = all_sources.index(source_name)
-            except ValueError:
-                continue
+        found_sources = [
+            source.strip().replace(".", "")
+            for source in sources.split(",")
+            if source.strip().replace(".", "") in all_sources
+        ]
+        for source_name in found_sources:
+            index = all_sources.index(source_name)
             text = texts[index]
-            found_sources.append(source_name)
             source_elements.append(cl.Text(content=text, name=source_name))
-
-        if found_sources:
-            answer += f"\nSources: {', '.join(found_sources)}"
-        else:
-            answer += "\nNo sources found"
-
+        answer += f"\nSources: {', '.join(found_sources)}"
+    else:
+        answer += "\nNo sources found"
     if cb.has_streamed_final_answer:
         cb.final_stream.elements = source_elements
         await cb.final_stream.update()
     else:
         await cl.Message(content=answer, elements=source_elements).send()
 
-async def get_ai_response(model_name: str, message_history: list) -> (str, cl.Message):
+
+async def get_ai_response(model_name, message_history):
+    """根據所選模型獲取 AI 的響應。"""
     if model_name == "vicuna":
         headers = {"Content-Type": "application/json"}
         data = {
@@ -168,22 +164,24 @@ async def get_ai_response(model_name: str, message_history: list) -> (str, cl.Me
             "messages": message_history,
             "max_tokens": 1500,
         }
-        response = requests.post(url_to_vicuna, headers=headers, data=json.dumps(data), timeout=60)
+        response = requests.post(URL_TO_VICUNA, headers=headers, data=json.dumps(data), timeout=60)
         return response.json()["choices"][0]["message"]["content"]
     else:
         msg = cl.Message(content="")
         async for stream_resp in await openai.ChatCompletion.acreate(
-            model="gpt-3.5-turbo", messages=message_history, stream=True, **settings
+                model="gpt-3.5-turbo", messages=message_history, stream=True, **OPENAI_SETTINGS
         ):
             token = stream_resp.choices[0]["delta"].get("content", "")
             await msg.stream_token(token)
         return msg
 
-async def continuous_chat(message: str):
+
+async def continuous_chat(message):
+    """處理連續聊天模式。"""
     message_history = user_session.get("message_history")
-    value = user_session.get("value")
+    selected_model = user_session.get("selected_model")
     message_history.append({"role": "user", "content": message})
-    response = await get_ai_response(value, message_history)
+    response = await get_ai_response(selected_model, message_history)
     if isinstance(response, cl.Message):
         await response.send()
         message_history.append({"role": "assistant", "content": response.content})
@@ -191,10 +189,12 @@ async def continuous_chat(message: str):
         await cl.Message(content=response).send()
         message_history.append({"role": "assistant", "content": response})
 
-async def single_chat(message: str):
-    value = user_session.get("value")
+
+async def single_chat(message):
+    """處理單次聊天模式。"""
+    selected_model = user_session.get("selected_model")
     mes = [{"role": "user", "content": message}]
-    response = await get_ai_response(value, mes)
+    response = await get_ai_response(selected_model, mes)
     if isinstance(response, cl.Message):
         await response.send()
     else:

@@ -5,7 +5,7 @@ def run_chainlit():
     try:
         subprocess.run(command)
     except KeyboardInterrupt:
-        print("\nChainlit process terminated by user.")
+        print("\nChainlit已停止.")
 
 if __name__ == "__main__":
     run_chainlit()

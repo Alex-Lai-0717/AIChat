@@ -1,0 +1,8 @@
+{
+  "URL": "https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-C0032-001",
+  "Authorization": "CWB-4B83516A-F541-41A1-B3A3-DC85420D0CD4",
+  "limit": "30",
+  "offset": "0",
+  "locationName": "桃園市",
+  "sort": "time"
+}
